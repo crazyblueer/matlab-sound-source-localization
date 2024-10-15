@@ -1,0 +1,76 @@
+clear m; 
+m = mobiledev; 
+desiredSampleRate = 100; 
+
+if desiredSampleRate < 1
+    error('Sample rate is too low');
+end 
+
+if desiredSampleRate > 100
+    error('Sample rate is too high');
+end 
+
+samplePeriod = 1 / desiredSampleRate;
+
+m.SampleRate = desiredSampleRate;
+
+m.MicrophoneEnabled = 1; 
+m.Logging = 1;
+
+disp("Wait for Microphone sensor data at: " + string(datetime));
+
+while isempty(m.Microphone)
+end
+
+disp("Received Microphone sensor data at: " + string(datetime));
+
+elapsedTime = 0; 
+maxDuration = 10; 
+sampleCount = 1;
+
+allAudioData = []; 
+noDataCount = 0;  
+
+while elapsedTime < maxDuration
+    pause(samplePeriod);  
+    elapsedTime = elapsedTime + samplePeriod;
+    
+    micData = readAudio(m); 
+
+    disp("MicData Type: " + class(micData));
+    disp("MicData Size: " + num2str(size(micData)));
+    
+    if isnumeric(micData)
+        if isempty(micData)
+            noDataCount = noDataCount + 1; 
+            % Only display message every 5 consecutive empty captures
+            if noDataCount <= 5
+                disp("No audio data captured.");  
+            end
+            continue; 
+        else
+            noDataCount = 0;  % Reset counter if data is captured
+        end
+        
+        allAudioData = [allAudioData; micData]; 
+
+        disp("Timestamp: " + string(datetime('now')));
+    else
+        disp("MicData is not numeric. Type: " + class(micData));
+    end
+
+    sampleCount = sampleCount + 1;  
+end 
+
+m.Logging = 0; 
+
+% Plot 
+figure;
+plot(allAudioData);
+title('Audio Waveform');
+xlabel('Samples');
+ylabel('Amplitude');
+xlim([0, length(allAudioData)]);
+grid on;
+
+clear m; 
