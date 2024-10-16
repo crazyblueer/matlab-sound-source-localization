@@ -1,0 +1,143 @@
+% clear;
+% clear m;
+% 
+% mobileDevObject = mobiledev;
+% mobileDevObject.MicrophoneEnabled = 1;
+% 
+% % Record background sound
+% mobileDevObject.logging = 1;
+% disp("Logging started...");
+% pause(2); % Allow time to capture background noise
+% mobileDevObject.logging = 0;
+% 
+% audioData = readAudio(mobileDevObject);
+% disp("Size of captured audio data:");
+% disp(size(audioData)); % Check the size of audioData
+% 
+% if isempty(audioData) || size(audioData, 1) == 0
+%     disp("No audio data captured. Please ensure the microphone is enabled and try again.");
+%     return; % Exit if no data
+% end
+% 
+% disp("Maximum sound of the background noise: ");
+% threshold = max(abs(audioData), [], "all");
+% disp(threshold); % Print threshold value
+
+clear;
+clear m;
+ 
+mobileDevObject = mobiledev;
+mobileDevObject.MicrophoneEnabled = 1;
+ 
+% %record background sound 
+ mobileDevObject.logging = 1;
+ disp("Sampling background noise...")
+ pause(2)
+mobileDevObject.logging = 0
+ audioData = readAudio(mobileDevObject);
+disp("Size of captured audio data:");
+disp(size(audioData));
+disp("Maximum sound of the background noise: ")
+threshold = max(abs(audioData),[],"all")
+
+
+%start the speech recording
+
+disp("Speak into the device ");
+mobileDevObject.logging = 1;
+tic 
+disp("Testing matlab mobile audio");
+startTime = 0;
+totalAudio = [];
+% 
+% 
+while toc < 5 && startTime == 0 
+     pause(.2)
+     audioData = readAudio(mobileDevObject);
+     disp(size(audioData)); 
+     disp(max(abs(audioData)));
+    if max(abs(audioData)) > threshold * 1.5 
+         startTime = toc 
+         totalAudio = audioData; 
+     else 
+        totalAudio = vertcat(totalAudio, audioData);
+     end 
+ end 
+% 
+% 
+% 
+% %acquire audio data
+% 
+ if startTime ~= 0
+     numberOfIntervalsStopped = 0;
+     while numberOfIntervalsStopped < 2 && toc <10
+         pause(.2)
+        audioData = readAudio(mobileDevObject);
+         if max(abs(audioData)) < threshold*1.5
+            numberOfIntervalsStopped = numberOfIntervalsStopped + 1;
+         else
+             numberOfIntervalsStopped = 0;
+         end 
+         totalAudio = vertcat(totalAudio, audioData);
+     end
+ end
+% 
+ mobileDevObject.logging = 0;
+% 
+% 
+% %preprocess audio data 
+ endTime = toc;
+leftAudio = totalAudio(:,1);
+ n = numel(leftAudio);
+ if n ==0
+     disp(" ")
+     disp("no audio data recorded. try run again")
+     clear mobileDevObject 
+     return 
+ end 
+sampleRate = mobileDevObject.Microphone.SampleRate;
+% 
+% 
+% %plot audio data in time domain
+ figure(1);
+ plot(leftAudio)
+ title('Sound wave');
+ timeElapsed = endTime - startTime 
+ ticks = 0:floor(timeElapsed);
+sampleTicks = ticks * n/timeElapsed;
+ xticks(sampleTicks)
+ xticklabels(ticks)
+ xlabel('Time(s)')
+ylabel('Amplitude')
+% 
+% 
+% process audio data in frequency domain
+
+fftData = fft(leftAudio);
+signalLength = n;
+fftNormal = abs(fftData/signalLength);
+fftNormal = fftNormal(1:floor(signalLength/2)+1);
+fftNormal(2:end-1) = 2*fftNormal(2:end-1);
+freqs = sampleRate*(0:(signalLength/2))/signalLength;
+scale = sampleRate/signalLength;
+
+%plot audio data in frequency domain of 0-1000Hz
+cutoff = 1000/scale;
+figure(2);
+plot(freqs(1:floor(cutoff)), fftNormal(1:floor(cutoff)))
+title("Frequency Domain Graph")
+xlabel("frequency(Hz)")
+ax = gca;
+ax.XAxis.Exponent = 0;
+
+
+%final frequency analysis and clean up
+
+[mVal, mInd] = max(fftNormal);
+fprintf("Dominant frquency: %d Hz\n",floor(mInd*scale));
+if startTime ==0
+    disp(' ')
+    disp('Voice too low');
+end 
+clear mobileDevObject 
+
