@@ -1,0 +1,379 @@
+close all;
+clear; clc; format compact;
+
+m = mobiledev; 
+m.MicrophoneEnabled = 1; 
+%% record background noise, find the maximum value to set the threshold btw background noise and detected speech
+
+m.logging = 1;
+disp('Sampling background noise...')
+pause(2)
+m.logging = 0;
+audioData = readAudio(m);
+disp('Maximum sound of the background noise: ')
+threshold = max(abs(audioData),[],"all")  %compute the max absolute value of the audio data to set a threshold for detecting speech 
+
+
+%%step1: keep the mic stationary, detect speech, identify omega by FFT
+
+%record the speech:
+disp('Prepare to say something into the mic')
+m.logging = 1;
+tic  %start a timer to measure how long the recording takes 
+disp("Play the sound")
+pause(2);
+startTime = 0;
+totalAudio = [];
+
+%detect the speech to trigger acquisition
+while toc < 5 && startTime == 0  %loop for 5 seconds until speech is detected 
+    pause (.2)
+    audioData = readAudio(m);
+    if max(abs(audioData)) > threshold * 0.5 %check if the sound level exceeds 50% of the threshopld
+        startTime = toc %record the time at which speech was detected 
+        totalAudio = audioData;
+    else 
+        totalAudio = vertcat(totalAudio, audioData);
+    end
+end 
+
+
+%Acquire Audio data 
+if startTime ~= 0 
+    numberOfIntervalsStopped = 0;
+    while numberOfIntervalsStopped < 2 && toc < 10 
+        pause(.2)
+        audioData = readAudio(m);
+        if max(abs(audioData)) < threshold * 1.5 
+            numberOfIntervalsStopped = numberOfIntervalsStopped + 1;
+        else 
+            numberOfIntervalsStopped = 0;
+        end 
+        totalAudio = vertcat(totalAudio, audioData);
+    end 
+end 
+
+m.logging = 0;
+
+%preprocess audio data
+endTime = toc;  %record the end time 
+leftAudio = totalAudio(:,1);
+n = numel(leftAudio); %compute the number of audio samples recorded 
+if n ==0
+    disp(' ')
+    disp('No audio data recorded. Try running the script again')
+    clear m
+    return 
+end 
+sampleRate = m.Microphone.SampleRate; 
+
+
+%Process Audio Data in frequency domain
+fftData = fft(leftAudio);  %compute the fft of the recorded audio
+signalLength = n; %store the length of the audio signal
+fftNormal = abs(fftData/signalLength);  %normalizes the FFT data to get the amplitude spectrum
+fftNormal = fftNormal(1:floor(signalLength/2)+1);  %take the positive frequencies from the FFT result 
+fftNormal(2:end-1) = 2 * fftNormal(2:end-1);  %correct the amplitude for the positive frequencies
+freqs = sampleRate*(0:(signalLength/2))/signalLength;  %create a frequency vector for plotting 
+scale = sampleRate/signalLength; %convert factor from index to frequency 
+
+%Plot audio data in frequency domain 
+cutoff = 1000/scale;  %design a cut off frequency for plotting
+figure(1);
+plot(freqs(1:floor(cutoff)), fftNormal(1:floor(cutoff)))
+title('Frequency Domain Graph')
+xlabel('Frequency(Hz)')
+ylabel('Amplitude')
+ax = gca; %get the current axes of the plot 
+ax.XAxis.Exponent = 0; %ensure the x-axis exponent is not shown in scientific notation 
+
+
+%Step 1: print the dominant frequency and find angular frequency of the sound
+%source 
+[mVal, mInd] = max(fftNormal);  %find the maximum value and its index in the FFT result 
+fprintf('Dominant frequency: %d Hz\n', floor(mInd*scale));
+dominant_freq = floor(mInd*scale);
+w = 2*pi * floor(mInd*scale); %find angular frequency 
+fprintf('Angular frequency of the sound source is: %.6f rad/s\n', w);
+if startTime == 0 
+    disp(' ')
+    disp('The voice is too low compared to the background noise')
+end 
+
+%% Step 2: Move the mic, collect p(t), segment it, get p_i(t), transform to frequency and get omega at each segment 
+
+signal_period = 1/dominant_freq; %calculate the period of the dominant frequency
+segment_multiplier = 2; 
+segment_length = segment_multiplier * (signal_period / 2);
+
+% Convert segment length to samples
+segment_samples = round(segment_length * sampleRate);
+if segment_samples < 1 
+    segment_samples = 1; 
+end  
+
+% Update total_time 
+num_segments = floor(n / segment_samples);
+total_time = segment_length * num_segments;
+
+% Now move the mic 
+disp('Move the mic at a steady speed');
+pause(2);
+m.logging = 1; 
+
+disp('Starting audio collection...');
+disp(['Segment length: ', num2str(segment_length)]);
+disp(['Sample rate: ', num2str(sampleRate)]);
+disp(['Total time for collection: ', num2str(total_time)]);
+
+% Collect audio data while moving the mic
+tic; % Start the timer
+p_total = []; 
+
+while toc < total_time 
+    audioData = readAudio(m);
+    
+    % Collect audio data
+    if ~isempty(audioData) && size(audioData, 1) > 0
+        p_total = vertcat(p_total, audioData);
+    
+        max_amplitude = max(abs(audioData), [], 'all');
+    if max_amplitude > 0
+        disp(['Max amplitude: ', num2str(max_amplitude)]);
+    end
+end
+    
+    pause(segment_length); 
+end 
+
+m.logging = 0; % Stop logging
+disp('Finished audio collection.');
+
+% Preprocess audio data
+n = numel(p_total); %total number of samples collected   ;numel returns the number of elements in an array
+disp(['Total audio data size: ', num2str(n)]); % Check total size
+
+if n < segment_samples
+    disp('Not enough audio data recorded for segmentation. Try again.');
+    clear m;
+    return;
+end
+
+% Segment the collected data 
+segments = reshape(p_total(1:floor(n/segment_samples)*segment_samples), segment_samples, []);
+num_segments = size(segments, 2);
+disp(['Number of segments: ', num2str(num_segments)]);
+disp(['Size of segments: ', num2str(size(segments))]); % Check size of segments
+
+% Time-frequency transformation for each segment
+p_i = zeros(segment_samples, num_segments); 
+p_i_w = zeros(num_segments, 1); 
+window = hann(segment_samples); %hanning window
+for i = 1:num_segments
+    windowed_segment = segments(:,i).*window; %apply window to segment
+    fftData = fft(windowed_segment);
+    p_i(:, i) = abs(fftData);
+    
+    [mVal, mInd] = max(p_i(:, i)); 
+    dominant_frequency = mInd * (sampleRate / segment_samples);
+    p_i_w(i) = 2 * pi * dominant_frequency; 
+end 
+disp('Completed FFT transformation for all segments.'); 
+
+% Frequency vector for plotting
+freqs = sampleRate * (0:(floor(segment_samples/2))) / segment_samples;
+
+% Number of random segments to plot
+numPlots = 5;
+
+% Generate random segment indices
+randomIndices = randperm(num_segments, numPlots);
+
+% % Plot the selected segments to check the patterns 
+% figure;
+% for i = 1:numPlots
+%     subplot(numPlots, 1, i);
+%     segmentIndex = randomIndices(i);
+%     plot(freqs(1:floor(segment_samples/2)+1), p_i(1:floor(segment_samples/2)+1, segmentIndex));
+%     title(['FFT of Segment ' num2str(segmentIndex)]);
+%     xlabel('Frequency (Hz)');
+%     ylabel('Magnitude');
+%     xlim([0, sampleRate / 2]); % Limit x-axis to Nyquist frequency
+% end
+% sgtitle('FFT Results for Random Segments');
+% 
+% disp('Statistics for p_i:');
+% disp(['Mean: ', num2str(mean(p_i(:)))]);
+% disp(['Max: ', num2str(max(p_i(:)))]);
+
+
+%% step 5: divide grids in the area where the real source may exist,construct the virtual source Sv on each grid node
+
+% Create the grid
+c = 343;  % Speed of sound
+lamda = c / dominant_freq;  % Wavelength
+k = 2 * pi / lamda;  % Wave number
+
+gridSize = 1;  % 1m x 1m grid
+numDivisions = 10;
+stationary_duration = min(10, endTime);
+numTimeSteps = floor(stationary_duration * sampleRate);
+sourcePosition = [0.5,0.5];
+p_v = zeros(numDivisions, numDivisions, numTimeSteps);  % Pressure values
+
+x = linspace(0, gridSize, numDivisions + 1);
+y = linspace(0, gridSize, numDivisions + 1);
+[X, Y] = meshgrid(x, y);
+
+for t = 1:numTimeSteps
+    currentTime = t / sampleRate;
+    for i = 1:numDivisions
+        for j = 1:numDivisions
+            % Calculate the distance from the sound source at (X(i,j), Y(i,j)) to the mic position
+            r_v = sqrt((sourcePosition(1) - X(i,j))^2 + (sourcePosition(2) - Y(i,j))^2);
+            t_sv = currentTime - (r_v / c);  % Calculate time delay
+
+            if r_v > 0
+                % Calculate the pressure at grid node (i, j) and time t
+                p_v(i,j,t) = (exp(1j * (w * t_sv - k * r_v)) + exp(-1j * (w * t_sv - k * r_v))) / r_v;
+            end
+        end
+    end
+end
+
+disp(['Maximum pressure value: ', num2str(max(max(max(p_v))))]);
+
+
+%% Step 6: Segment and FFT each signal in each node for moving mic
+segment_length = segment_samples;  % Number of samples per segment
+num_segments_real = size(p_i_w, 1);  % Number of segments from p_i_w
+
+num_time_steps = size(p_v, 3);  % Total number of time steps recorded - 3rd dimension
+num_segments_hypothetical = floor(num_time_steps / segment_length);  % Calculate max segments based on time steps
+
+% Determine the minimum number of segments to align
+num_segments = min(num_segments_real, num_segments_hypothetical); 
+
+% Adjust p_v to ensure it has the same number of usable samples
+total_samples = num_segments * segment_length;  % Total samples to keep
+
+% Initialize output array for dominant angular frequencies
+p_v_w = zeros(numDivisions, numDivisions, num_segments);  % Initialize output for angular frequencies
+
+% Hanning window for segment analysis
+window = hann(segment_length);  % Create a Hanning window
+
+% Segment and transform for each grid node
+for i = 1:numDivisions
+    for j = 1:numDivisions
+        % Get the pressure values for the current grid node
+        p_node = squeeze(p_v(i, j, :));  % Extract pressure data for the specific grid node
+        
+        % Ensure enough samples before reshaping
+        if length(p_node) < total_samples
+            warning('Not enough samples for grid node (%d, %d). Skipping...', i, j);
+            continue;  % Skip to the next grid node if insufficient samples
+        end
+        
+        % Segment the pressure values
+        segments = reshape(p_node(1:total_samples), segment_length, []);  % Reshape based on usable samples
+        
+        % Perform FFT for each segment
+        for k = 1:num_segments
+            windowed_segment = segments(:, k) .* window;  % Apply windowing to the segment
+            fftData = fft(windowed_segment);  % Compute FFT
+            
+            % Get the dominant frequency
+            [~, mInd] = max(abs(fftData(1:floor(segment_length/2)+1)));  % Find max in positive frequency range
+            dominant_frequency = mInd * (sampleRate / segment_length);  % Calculate dominant frequency
+            
+            % Store the dominant angular frequency
+            p_v_w(i, j, k) = 2 * pi * dominant_frequency;  
+        end
+    end
+end
+
+disp('Completed FFT transformation for all virtual sources.');
+
+%% Step 7: Calculate P_v_w and normalize e_v, calculate the inner product
+% Ensure both p_i_w and p_v_w are the same size 
+num_divisions = size(p_v_w, 1) * size(p_v_w, 2);  % Total number of grid nodes
+num_segments = size(p_v_w, 3);  % Number of segments in p_v_w
+
+% Reshape p_i_w to match the grid size 
+if num_segments ~= size(p_i_w, 1)
+    % Check if p_i_w needs to be reshaped
+    if size(p_i_w, 1) == num_segments
+        p_i_w = reshape(p_i_w, [], 1);  % Make sure p_i_w is a column vector
+    else
+        % Reshape p_i_w to match the number of elements in p_v_w
+        p_i_w = reshape(p_i_w(1:min(end, num_segments)), [], 1);  % Ensure it has the same number of elements
+    end
+end
+
+% Initialize R matrix for inner products
+R = zeros(size(p_v_w, 1), size(p_v_w, 2));
+
+% Normalize p_v_w across the third dimension
+p_v_w_flat = reshape(p_v_w, [], num_segments);  % Flatten p_v_w for normalization
+p_v_w_max = max(abs(p_v_w_flat), [], 2);  % Max across segments for normalization
+p_v_w_normalized = p_v_w_flat ./ p_v_w_max;  % Normalize
+
+% Calculate the inner product with e_v
+for i = 1:size(p_v_w, 1)
+    for j = 1:size(p_v_w, 2)
+        P = squeeze(p_v_w(i, j, :));  % Extract pressure data for the specific grid node
+        
+        if norm(P) > 0
+            % Normalize P for inner product calculation
+            P_norm = P / norm(P);
+            R(i, j) = abs(dot(P_norm, p_i_w));  % Inner product with normalized P
+        else
+            R(i, j) = 0;  % Set to zero if P has no magnitude
+        end
+    end
+end
+
+% Find the maximum R value and its location
+[Rmax, maxIndex] = max(R(:));
+[row, col] = ind2sub(size(R), maxIndex);  % Convert linear index to row, col
+
+disp(['Maximum R value: ', num2str(Rmax)]);
+disp(['Location S1: (' num2str(x(row)) ', ' num2str(y(col)) ')']);
+
+% Plot the inner product R values
+figure;
+imagesc(R);
+colorbar;
+title('Inner Product R Values');
+xlabel('Grid Column');
+ylabel('Grid Row');
+axis equal; % Keep aspect ratio
+set(gca, 'YDir', 'normal'); % Correct y-axis direction
+
+
+% Define the path of the microphone
+mic_x = linspace(0, 1, num_segments);  % x-coordinates from 0 to 1
+mic_y = zeros(size(mic_x));              % y-coordinates at 0
+
+source_x = x(row);  % x-coordinate of estimated source
+source_y = y(col);  % y-coordinate of estimated source
+
+% Create the plot
+figure;
+hold on;
+plot(mic_x, mic_y, 'b-', 'LineWidth', 2);  % Plot microphone path
+plot(source_x, source_y, 'ro', 'MarkerSize', 10, 'MarkerFaceColor', 'r');  % Plot estimated source location
+
+xlabel('X Position');
+ylabel('Y Position');
+title('Microphone Movement and Estimated Sound Source Location');
+legend('Microphone Path', 'Estimated Sound Source');
+axis equal;  
+grid on;
+
+text(source_x, source_y, ' Estimated Source', 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'right');
+hold off;
+
+
+clear m; 
