@@ -1,0 +1,106 @@
+close all;
+clear; clc; format compact;
+
+m = mobiledev; 
+
+%for acceleration
+desiredSampleRate = 10;
+samplePeriod = 1/desiredSampleRate;
+m.SampleRate = desiredSampleRate;
+m.AccelerationSensorEnabled = 1;
+cutoffFreq = 5; 
+m.Logging  = 1;
+while (isempty(m.Acceleration))
+end
+figure; 
+hPlot = plot(nan,nan);
+xlabel('Time(s)');
+ylabel('Filtered Position(m)');
+title('Filtered horizontal movement');
+hold on; 
+
+timeBuffer  =[];
+positionBuffer= [];
+maxBufferSize =1000;
+startPlotting = false;
+while m.Logging == 1
+%     disp('Entering the loop...');
+    
+    [accData, timeStamps] = accellog(m);
+%      disp('Acceleration Data Size:');
+%      disp(size(accData));
+    
+    % Check if we have valid data
+    
+
+    ax = accData(:, 1); % Access the first column safely
+    x_filtered = processAcceleration(accData, timeStamps, cutoffFreq);
+    
+    % Store data for plotting
+    timeBuffer = [timeBuffer; timeStamps];
+    positionBuffer = [positionBuffer; x_filtered];
+    
+    % Check if enough data has been received to start plotting
+    if length(positionBuffer) >= 6 % Set your threshold here
+        startPlotting = true;
+    end
+
+    % Start plotting only if there's enough data
+    if startPlotting
+        if mod(length(positionBuffer), 100) == 0
+            positionBuffer(end) = 0; % Resetting to zero (or another reference)
+        end
+        
+        if length(timeBuffer) > maxBufferSize
+            timeBuffer = timeBuffer(end-maxBufferSize+1:end);
+            positionBuffer = positionBuffer(end-maxBufferSize+1:end);
+        end
+        
+        % Update the plot
+        set(hPlot, 'XData', timeBuffer, 'YData', positionBuffer);
+        xlim([max(0, timeBuffer(1)) max(timeBuffer)]);
+        if numel(unique(positionBuffer)) > 1
+            ylim([min(positionBuffer) max(positionBuffer)]);
+        else
+            ylim([-1 1]);
+        end
+        
+        drawnow;
+    end
+
+    pause(samplePeriod);
+end
+m.Logging = 0;
+clear m;
+
+function [x_filtered] = processAcceleration(accData, timeStamps, cutoffFreq)
+    if isempty(accData) || size(accData, 1) < 1 || size(accData, 2) < 1
+        x_filtered = []; % Return an empty array for invalid input
+        return;
+    end
+
+    dt = mean(diff(timeStamps));
+    fs = 1 / dt;
+    
+    if size(accData, 2) < 1
+        error('Acceleration data does not have the expected number of columns.');
+    end
+
+    ax = accData(:, 1); % Access the first column safely
+
+    % Check if we have enough samples for filtering
+    if length(ax) < 7  % Ensure we have at least 7 samples for filtering
+        x_filtered = zeros(size(ax)); % Return zeros for insufficient data
+        return;
+    end
+
+    [b, a] = butter(2, cutoffFreq / (fs / 2), 'low');
+    
+    % Perform the filtering
+    ax_filtered = filtfilt(b, a, ax);
+    
+    % Integrate to get velocity and position
+    vx_filtered = cumtrapz(timeStamps, ax_filtered); % Velocity
+    x_filtered = cumtrapz(timeStamps, vx_filtered); % Position
+end
+
