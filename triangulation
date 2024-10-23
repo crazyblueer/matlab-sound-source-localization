@@ -1,0 +1,61 @@
+% Initialize mobile device and enable microphone
+clear m;
+m = mobiledev; 
+m.MicrophoneEnabled = 1; % Enable the microphone
+
+% Get the microphone sample rate
+sampleRate = m.Microphone.SampleRate; 
+disp(['Microphone Sample Rate: ', num2str(sampleRate), ' Hz']);
+
+% Set parameters for recording
+locations = [0, 0; 1, 0; 0, 1]; % Define locations (x, y coordinates)
+volumeData = zeros(size(locations, 1), 1);
+
+% Record background noise to set a threshold
+disp('Sampling background noise...');
+m.Logging = 1; % Start logging
+pause(2); % Record for 2 seconds
+m.Logging = 0; % Stop logging
+audioData = readAudio(m); % Read the audio data
+threshold = max(abs(audioData), [], "all");
+disp(['Maximum sound of the background noise: ', num2str(threshold)]);
+
+% Loop through each location to record audio
+for i = 1:size(locations, 1)
+    disp(['Moving to location ', num2str(i), '...']);
+    
+    % Pause for 3 seconds to allow time to position the microphone
+    pause(3);
+    
+    disp(['Recording audio at location ', num2str(i), '...']);
+    m.Logging = 1; % Start logging
+    tic; % Start timer
+    totalAudio = []; % Reset audio data for each location
+
+    % Record audio until the time limit or speech is detected
+    while toc < 5 % Record for a maximum of 5 seconds
+        pause(0.2); % Short pause for buffering
+        audioData = readAudio(m); % Read the audio data
+        totalAudio = [totalAudio; audioData]; % Accumulate audio data
+        
+        % Check if speech is detected above the threshold
+        if max(abs(audioData)) > threshold * 1.5
+            disp('Speech detected, recording...');
+        end
+    end
+    m.Logging = 0; % Stop logging
+
+    % Process the audio data for volume calculation
+    leftAudio = totalAudio(:, 1); % Use one channel
+    volumeData(i) = calculateVolume(leftAudio);
+    disp(['Volume at location ', num2str(i), ': ', num2str(volumeData(i)), ' Pa']);
+end
+
+% Determine the closest location based on volume
+[~, closestIdx] = max(volumeData);
+disp(['The closest location is: Location ', num2str(closestIdx)]);
+clear m;
+% Function to calculate volume from audio data
+function volume = calculateVolume(audioData)
+    volume = sqrt(mean(audioData.^2)); % RMS volume calculation
+end
