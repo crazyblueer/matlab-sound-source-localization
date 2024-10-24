@@ -1,0 +1,118 @@
+close all; clear; clc; clear m;
+m = mobiledev; 
+m.MicrophoneEnabled = 1;
+
+sampleRate = m.Microphone.SampleRate; 
+disp(['Microphone Sample Rate: ', num2str(sampleRate), ' Hz']);
+
+% Record background noise to set a threshold
+disp('Sampling background noise...');
+m.Logging = 1; % Start logging
+pause(2); % Record for 2 seconds
+m.Logging = 0; % Stop logging
+audioData = readAudio(m); % Read the audio data
+threshold = max(abs(audioData), [], "all");
+disp(['Maximum sound of the background noise: ', num2str(threshold)]);
+
+locations = [0, 0; 0, 1; 1, 0]; % Define microphone locations here
+
+while true % Infinite loop
+    distances = zeros(1, 3); % Reset distances for each iteration
+    volumeData = zeros(1, 3); % Reset volume data for each iteration
+
+    % Loop through each location to record audio
+    for i = 1:3
+        disp(['Moving to location ', num2str(i), '...']);
+        pause(4); % Wait for positioning
+
+        disp(['Recording audio at location ', num2str(i), '...']);
+        m.Logging = 1; % Start logging
+        tic; % Start timer
+        totalAudio = []; % Reset audio data for each location
+
+        % Record audio until the time limit
+        while toc < 5 % Record for a maximum of 5 seconds
+            pause(0.2); % Short pause for buffering
+            audioData = readAudio(m); % Read the audio data
+            totalAudio = [totalAudio; audioData]; % Accumulate audio data
+        end
+        m.Logging = 0; % Stop logging
+
+        % Process the audio data for volume calculation
+        leftAudio = totalAudio(:, 1); % Use one channel
+        volumeData(i) = calculateVolume(leftAudio);
+        disp(['Volume at location ', num2str(i), ': ', num2str(volumeData(i)), ' Pa']);
+
+        % Convert volume to estimated distance
+        distances(i) = calculateDistance(volumeData(i));
+        disp(['Estimated distance to location ', num2str(i), ': ', num2str(distances(i)), ' m']);
+    end
+
+    % Determine the closest location based on volume
+    [~, closestIdx] = max(volumeData);
+    disp(['The closest location is: Location ', num2str(closestIdx)]);
+
+    % Calculate the intersection of circles
+    intersectionPoint = calculateIntersection(distances);
+    disp(['Estimated sound source location: ', num2str(intersectionPoint(1)), ', ', num2str(intersectionPoint(2))]);
+
+    % Plotting the locations and intersection point
+    figure;
+    hold on;
+    plot(locations(:, 1), locations(:, 2), 'bo', 'MarkerSize', 10, 'DisplayName', 'Microphone Locations');
+
+    % Plot the intersection point
+    plot(intersectionPoint(1), intersectionPoint(2), 'k*', 'MarkerSize', 10, 'DisplayName', 'Estimated Source Location');
+    legend;
+    xlabel('X Coordinate (m)');
+    ylabel('Y Coordinate (m)');
+    title('Sound Source Localization');
+    grid on;
+    hold off;
+
+    % Optionally, wait for user input to continue or break
+    cont = input('Continue to next iteration? (y/n): ', 's');
+    if lower(cont) ~= 'y'
+        break; % Exit the loop if user does not input 'y'
+    end
+end
+
+clear m;
+
+
+function volume = calculateVolume(audioData)
+    volume = sqrt(mean(audioData.^2)); % RMS volume calculation
+end
+
+function distance = calculateDistance(volume)
+    % Use your derived linear equation: Pressure = -0.2297 * Distance + 0.2711
+    % Rearranging: Distance = (Pressure - 0.2711) / -0.2297
+    pressure = volume; % Assume volume is in Pa
+    distance = (pressure - 0.2711) / -0.2297;
+end
+
+function intersectionPoint = calculateIntersection(distances)
+    % Define the positions of the microphones
+    locations = [0, 0; 0, 1; 1, 0]; % [x1, y1; x2, y2; x3, y3]
+    
+    % Unpack microphone locations
+    x1 = locations(1, 1); y1 = locations(1, 2);
+    x2 = locations(2, 1); y2 = locations(2, 2);
+    x3 = locations(3, 1); y3 = locations(3, 2);
+    
+    % Circle equations derived as discussed
+    d1 = distances(1);
+    d2 = distances(2);
+    d3 = distances(3);
+    
+    % Rearranged equations
+    A = [2*(x2 - x1), 2*(y2 - y1);
+         2*(x3 - x1), 2*(y3 - y1)];
+     
+    B = [(d1^2 - d2^2 + x2^2 - x1^2 + y2^2 - y1^2);
+         (d1^2 - d3^2 + x3^2 - x1^2 + y3^2 - y1^2)];
+    
+    % Solve the linear system
+    intersectionPoint = A\B; % MATLAB's backslash operator for solving Ax = B
+end
+
