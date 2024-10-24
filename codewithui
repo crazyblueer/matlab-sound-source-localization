@@ -1,0 +1,134 @@
+function simpleSoundLocalizationApp()
+    % Create the figure for the UI
+    f = figure('Position', [100, 100, 400, 300], 'MenuBar', 'none', ...
+               'Name', 'Sound Localization', 'NumberTitle', 'off', ...
+               'CloseRequestFcn', @closeApp);
+    
+    % Create UI components
+    uicontrol('Style', 'text', 'Position', [50, 230, 300, 30], ...
+              'String', 'Press "Start" to begin recording', 'FontSize', 12);
+    
+    startButton = uicontrol('Style', 'pushbutton', 'Position', [50, 170, 100, 30], ...
+                            'String', 'Start', 'Callback', @startCallback);
+    
+    stopButton = uicontrol('Style', 'pushbutton', 'Position', [200, 170, 100, 30], ...
+                           'String', 'Stop', 'Callback', @stopCallback);
+    stopButton.Enable = 'off'; % Disable stop button initially
+    
+    resultText = uicontrol('Style', 'text', 'Position', [50, 50, 300, 100], ...
+                           'String', '', 'FontSize', 12, 'HorizontalAlignment', 'left');
+    
+    % Initialize mobile device
+    global m locations;
+    m = mobiledev; 
+    m.MicrophoneEnabled = 1;
+
+    % Sample Rate Display
+    sampleRate = m.Microphone.SampleRate; 
+    disp(['Microphone Sample Rate: ', num2str(sampleRate), ' Hz']);
+    
+    % Record background noise to set a threshold
+    disp('Sampling background noise...');
+    m.Logging = 1; 
+    pause(2); 
+    m.Logging = 0; 
+    audioData = readAudio(m);
+    threshold = max(abs(audioData), [], "all");
+    disp(['Maximum sound of the background noise: ', num2str(threshold)]);
+
+    locations = [0, 0; 0, 1; 1, 0]; 
+
+    % Callback for start button
+    function startCallback(~, ~)
+        startButton.Enable = 'off';
+        stopButton.Enable = 'on';
+        resultText.String = 'Recording...';
+        
+        % Main processing loop
+        distances = zeros(1, 3);
+        volumeData = zeros(1, 3);
+        
+        for i = 1:3
+            disp(['Moving to location ', num2str(i), '...']);
+            pause(4);
+
+            disp(['Recording audio at location ', num2str(i), '...']);
+            m.Logging = 1; 
+            pause(5); % Allow time for recording
+            m.Logging = 0; 
+
+            % Read the recorded audio data
+            audioData = readAudio(m); 
+
+            leftAudio = audioData(:, 1); 
+            volumeData(i) = calculateVolume(leftAudio);
+            disp(['Volume at location ', num2str(i), ': ', num2str(volumeData(i)), ' Pa']);
+            distances(i) = calculateDistance(volumeData(i));
+            disp(['Estimated distance to location ', num2str(i), ': ', num2str(distances(i)), ' m']);
+        end
+        
+        [~, closestIdx] = max(volumeData);
+        intersectionPoint = calculateIntersection(distances);
+        
+        % Display results in the UI
+        resultText.String = {...
+            ['Closest location: ', num2str(closestIdx)], ...
+            ['Estimated source location: (', num2str(intersectionPoint(1)), ', ', num2str(intersectionPoint(2)), ')']};
+        
+        % Plot results
+        figure;
+        hold on;
+        plot(locations(:, 1), locations(:, 2), 'bo', 'MarkerSize', 10, 'DisplayName', 'Microphone Locations');
+        plot(intersectionPoint(1), intersectionPoint(2), 'k*', 'MarkerSize', 10, 'DisplayName', 'Estimated Source Location');
+        legend;
+        xlabel('X Coordinate (m)');
+        ylabel('Y Coordinate (m)');
+        title('Sound Source Localization');
+        grid on;
+        hold off;
+        
+        stopButton.Enable = 'off';
+        startButton.Enable = 'on';
+    end
+
+    % Callback for stop button
+    function stopCallback(~, ~)
+        stopButton.Enable = 'off';
+        startButton.Enable = 'on';
+        resultText.String = 'Stopped.';
+    end
+
+    % Function to handle closing the app
+    function closeApp(~, ~)
+        delete(m); % Clean up the mobile device
+        delete(f); % Close the figure
+    end
+end
+
+function volume = calculateVolume(audioData)
+    volume = sqrt(mean(audioData.^2)); 
+end
+
+function distance = calculateDistance(volume)
+    pressure = volume; 
+    distance = (pressure - 0.2711) / -0.2297;
+end
+
+function intersectionPoint = calculateIntersection(distances)
+    locations = [0, 0; 0, 1; 1, 0]; 
+    x1 = locations(1, 1); y1 = locations(1, 2);
+    x2 = locations(2, 1); y2 = locations(2, 2);
+    x3 = locations(3, 1); y3 = locations(3, 2);
+    
+    d1 = distances(1);
+    d2 = distances(2);
+    d3 = distances(3);
+    
+    A = [2*(x2 - x1), 2*(y2 - y1);
+         2*(x3 - x1), 2*(y3 - y1)];
+     
+    B = [(d1^2 - d2^2 + x2^2 - x1^2 + y2^2 - y1^2);
+         (d1^2 - d3^2 + x3^2 - x1^2 + y3^2 - y1^2)];
+    
+    intersectionPoint = A\B;
+end
