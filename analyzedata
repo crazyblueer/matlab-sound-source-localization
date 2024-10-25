@@ -1,0 +1,65 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import linregress
+
+# Read the CSV file
+file_path = 'SoundpressureDataset.csv'  
+try:
+    data = pd.read_csv(file_path, delimiter=';', dtype={
+        'Distance from microphone to sound source': float,
+        '1st Pressure': float,
+        '2nd Pressure': float,
+        '3rd Pressure': float,
+        '4th Pressure': float,
+        '5th Pressure': float,
+        '6th Pressure': float,
+        '7th Pressure': float,
+        '8th Pressure': float,
+        '9th Pressure': float,
+        '10th Pressure': float
+    })
+except FileNotFoundError:
+    print("The specified file was not found.")
+    exit()
+
+# Print original column names
+print("Original column names:", data.columns.tolist())
+
+# Strip whitespace from column names
+data.columns = data.columns.str.strip()
+
+# Print cleaned column names
+print("Cleaned column names:", data.columns.tolist())
+
+# Check if the expected column exists
+if 'Distance from microphone to sound source' not in data.columns:
+    print("Column 'Distance from microphone to sound source' not found.")
+    exit()
+
+# Calculate the average pressure for each distance
+data['Average Pressure'] = data.iloc[:, 1:].mean(axis=1)
+
+# Fit a linear regression model
+slope, intercept, r_value, p_value, std_err = linregress(
+    data['Distance from microphone to sound source'],
+    data['Average Pressure']
+)
+
+# Generate predictions based on the fitted model
+data['Fitted Pressure'] = slope * data['Distance from microphone to sound source'] + intercept
+
+# Output the linear equation
+print(f"Linear equation: Pressure = {slope:.4f} * Distance + {intercept:.4f}")
+print(f"R-squared: {r_value**2:.4f}")
+
+# Visualization
+plt.figure(figsize=(10, 6))
+plt.scatter(data['Distance from microphone to sound source'], data['Average Pressure'], label='Observed Data', color='blue')
+plt.plot(data['Distance from microphone to sound source'], data['Fitted Pressure'], color='red', label='Fitted Line')
+plt.xlabel('Distance from Microphone (m)')
+plt.ylabel('Average Pressure (Pa)')
+plt.title('Distance vs Average Pressure with Best Fit Line')
+plt.legend()
+plt.grid()
+plt.show()
